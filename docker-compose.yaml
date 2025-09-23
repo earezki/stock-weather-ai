@@ -1,0 +1,35 @@
+services:
+  searxng:
+    container_name: swai-searxng
+    image: docker.io/searxng/searxng:latest
+    volumes:
+      - ./config/searxng:/etc/searxng:rw
+    ports:
+      - 4040:8080
+    # restart: unless-stopped
+
+  infinity:
+    container_name: swai-infinity
+    image: michaelf34/infinity:latest-rocm
+    ports:
+      - "7998:7997"
+    volumes:
+      - ./.volumes/infinity:/app/.cache
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - AMD_SERIALIZE_KERNEL=3
+      - HSA_OVERRIDE_GFX_VERSION=10.3.0
+    ipc: host
+    privileged: true
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+    cpus: '2.0'
+    command: v2 --model-id ${EMBEDDING_MODEL} --revision "main" --dtype float16 --batch-size 8 --port 7997 --engine torch --compile --no-bettertransformer
+    # restart: unless-stopped
