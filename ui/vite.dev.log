@@ -1,7 +1,8 @@
 [33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+Port 5173 is in use, trying another one...
 
-  VITE v5.4.20  ready in 131 ms
+  VITE v5.4.20  ready in 125 ms
 
-  ➜  Local:   http://localhost:5173/
+  ➜  Local:   http://localhost:5174/
   ➜  Network: use --host to expose
   ➜  press h + enter to show help
