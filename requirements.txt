@@ -17,7 +17,9 @@ lxml
 tqdm
 
 Requests
+httpx==0.23.3
 httpx[http2]
+httpx-cache[all]
 tenacity
 
 pypdf
@@ -29,3 +31,10 @@ setuptools
 scipy
 
 joblib
+
+fake-useragent
+
+playwright
+
+fastapi
+uvicorn

@@ -63,6 +63,7 @@ class ModelsDict(TypedDict):
 models: ModelsDict = {
     "summary": llm,
     "query": llm,
+    "financial": llm,
     "embeddings": embeddings,
 }
 

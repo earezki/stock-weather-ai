@@ -1,10 +1,15 @@
 import yfinance as yf
 import pandas as pd
+import logging
 
 from toolkit.cache import memory, timestamp_key
 from options import options
 
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+from langchain.prompts import PromptTemplate
+
+logger = logging.getLogger(__name__)
 
 @memory.cache
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
@@ -22,12 +27,12 @@ def _get_company_financial_data(ticker_symbol, timestamp_key):
     company_data = {}
     ticker = yf.Ticker(ticker_symbol)
 
-    print(f"[INFO] Fetching data for {ticker_symbol}...")
+    logger.info(f"Fetching data for {ticker_symbol}...")
 
     company_data = {}
     ticker = yf.Ticker(ticker_symbol)
 
-    print(f"[INFO] Fetching lean data for {ticker_symbol}...")
+    logger.info(f"Fetching lean data for {ticker_symbol}...")
 
     KEY_INCOME_STATEMENT_METRICS = [
         'Total Revenue', 'Gross Profit', 'Operating Income',
@@ -65,18 +70,18 @@ def _get_company_financial_data(ticker_symbol, timestamp_key):
             'Return on Equity': info.get('returnOnEquity'),
             'Gross Margins': info.get('grossMargins')
         }
-        print("[INFO] Fetched company profile.")
+        logger.info("Fetched company profile.")
     except Exception as e:
-        print(f"[ERROR] Error fetching company profile: {e}")
+        logger.error(f"Error fetching company profile: {e}")
         company_data['Summary Profile'] = "Could not retrieve summary profile."
 
     try:
         hist_data = ticker.history(period="5y", interval="1mo", auto_adjust=True)
         hist_data.index = hist_data.index.strftime('%Y-%m-%d')
         company_data['Historical Stock Data (Last 5 Years - Monthly)'] = hist_data.to_dict()
-        print("[INFO] Fetched monthly historical stock data.")
+        logger.info("Fetched monthly historical stock data.")
     except Exception as e:
-        print(f"[ERROR] Error fetching monthly historical stock data: {e}")
+        logger.error(f"Error fetching monthly historical stock data: {e}")
         company_data['Historical Stock Data (Last 5 Years - Monthly)'] = "Could not retrieve monthly historical stock data."
 
     try:
@@ -89,9 +94,9 @@ def _get_company_financial_data(ticker_symbol, timestamp_key):
             company_data['Annual Income Statement (Key Metrics, Last 5 Years)'] = filtered_income_stmt.to_dict()
         else:
             company_data['Annual Income Statement (Key Metrics, Last 5 Years)'] = "Could not retrieve annual income statement."
-        print("[INFO] Fetched filtered annual income statements.")
+        logger.info("Fetched filtered annual income statements.")
     except Exception as e:
-        print(f"[ERROR] Error fetching annual income statements: {e}")
+        logger.error(f"Error fetching annual income statements: {e}")
         company_data['Annual Income Statement (Key Metrics, Last 5 Years)'] = "Could not retrieve annual income statement."
 
     try:
@@ -104,9 +109,9 @@ def _get_company_financial_data(ticker_symbol, timestamp_key):
             company_data['Annual Balance Sheet (Key Metrics, Last 5 Years)'] = filtered_balance_sheet.to_dict()
         else:
             company_data['Annual Balance Sheet (Key Metrics, Last 5 Years)'] = "Could not retrieve annual balance sheet."
-        print("[INFO] Fetched filtered annual balance sheets.")
+        logger.info("Fetched filtered annual balance sheets.")
     except Exception as e:
-        print(f"[ERROR] Error fetching annual balance sheets: {e}")
+        logger.error(f"Error fetching annual balance sheets: {e}")
         company_data['Annual Balance Sheet (Key Metrics, Last 5 Years)'] = "Could not retrieve annual balance sheet."
 
     try:
@@ -119,9 +124,9 @@ def _get_company_financial_data(ticker_symbol, timestamp_key):
             company_data['Annual Cash Flow Statement (Key Metrics, Last 5 Years)'] = filtered_cashflow.to_dict()
         else:
             company_data['Annual Cash Flow Statement (Key Metrics, Last 5 Years)'] = "Could not retrieve annual cash flow statement."
-        print("[INFO] Fetched filtered annual cash flow statements.")
+        logger.info("Fetched filtered annual cash flow statements.")
     except Exception as e:
-        print(f"[ERROR] Error fetching annual cash flow statements: {e}")
+        logger.error(f"Error fetching annual cash flow statements: {e}")
         company_data['Annual Cash Flow Statement (Key Metrics, Last 5 Years)'] = "Could not retrieve annual cash flow statement."
 
     try:
@@ -134,9 +139,9 @@ def _get_company_financial_data(ticker_symbol, timestamp_key):
             }
         else:
             company_data['Recent Dividends (Last 3)'] = "No recent dividends found."
-        print("[INFO] Fetched recent dividends.")
+        logger.info("Fetched recent dividends.")
     except Exception as e:
-        print(f"[ERROR] Error fetching recent dividends: {e}")
+        logger.error(f"Error fetching recent dividends: {e}")
         company_data['Recent Dividends (Last 3)'] = "Could not retrieve recent dividends data."
 
     try:
@@ -147,9 +152,9 @@ def _get_company_financial_data(ticker_symbol, timestamp_key):
             }
         else:
             company_data['Stock Splits'] = "No stock splits found."
-        print("[INFO] Fetched stock splits data.")
+        logger.info("Fetched stock splits data.")
     except Exception as e:
-        print(f"[ERROR] Error fetching stock splits data: {e}")
+        logger.error(f"Error fetching stock splits data: {e}")
         company_data['Stock Splits'] = "Could not retrieve stock splits data."
 
     try:
@@ -162,9 +167,9 @@ def _get_company_financial_data(ticker_symbol, timestamp_key):
             company_data['Top 5 Institutional Holders'] = top_5_holders.to_dict(orient='records')
         else:
             company_data['Top 5 Institutional Holders'] = "Could not retrieve institutional holders data."
-        print("[INFO] Fetched top 5 institutional holders.")
+        logger.info("Fetched top 5 institutional holders.")
     except Exception as e:
-        print(f"[ERROR] Error fetching institutional holders data: {e}")
+        logger.error(f"Error fetching institutional holders data: {e}")
         company_data['Top 5 Institutional Holders'] = "Could not retrieve institutional holders data."
         
     try:
@@ -173,9 +178,9 @@ def _get_company_financial_data(ticker_symbol, timestamp_key):
             company_data['Analyst Recommendations'] = recommendations.to_dict()
         else:
             company_data['Analyst Recommendations'] = "Could not retrieve analyst recommendations."
-        print("[INFO] Fetched analyst recommendations.")
+        logger.info("Fetched analyst recommendations.")
     except Exception as e:
-        print(f"[ERROR] Error fetching analyst recommendations: {e}")
+        logger.error(f"Error fetching analyst recommendations: {e}")
         company_data['Analyst Recommendations'] = "Could not retrieve analyst recommendations."
     
     try:
@@ -193,9 +198,9 @@ def _get_company_financial_data(ticker_symbol, timestamp_key):
             company_data['Key Earnings Dates'] = combined_earnings.to_dict()
         else:
             company_data['Key Earnings Dates'] = "Could not retrieve earnings dates."
-        print("[INFO] Fetched key earnings dates.")
+        logger.info("Fetched key earnings dates.")
     except Exception as e:
-        print(f"[ERROR] Error fetching earnings dates: {e}")
+        logger.error(f"Error fetching earnings dates: {e}")
         company_data['Key Earnings Dates'] = "Could not retrieve earnings dates."
 
     return company_data
@@ -205,3 +210,42 @@ def get_company_financial_data(ticker_symbol):
         ticker_symbol, 
         timestamp_key=timestamp_key(options['financial']['cache_duration'])
     )
+
+def get_report(ticker):
+    prompt = PromptTemplate.from_template(
+    """
+    You are a financial analyst. Analyze the following company data and produce a detailed report 
+    that assesses the company’s financial health and stock outlook.  
+    Use structured reasoning, covering profitability, growth, balance sheet strength, risks, 
+    market sentiment, and stock performance. End with an investment outlook (bullish, bearish, neutral).
+
+    Company Data (in JSON):
+    {company_data}
+
+    Your analysis should include:
+    1. **Business Overview** – What does the company do, and what sector/industry is it in?  
+    2. **Financial Health** – Evaluate profitability, cash flow, debt levels, margins, 
+    and capital expenditures.  
+    3. **Stock Performance** – Discuss historical trends, volatility, momentum, 
+    and recent market movements.  
+    4. **Institutional & Analyst Sentiment** – What are institutional holders doing? 
+    What do analysts recommend?  
+    5. **Risks & Red Flags** – Highlight key risks (debt, negative cash flow, volatility, 
+    missing profitability, etc.).  
+    6. **Investment Outlook** – Based on the above, should investors view this stock 
+    as bullish, bearish, or neutral? Justify your reasoning.
+
+    Write the report in a professional tone, suitable for an investor presentation.
+    """
+    )
+
+    company_data = get_company_financial_data(ticker)
+    chain = prompt | options["models"]["financial"]
+    response = chain.invoke({
+        "company_data": company_data,
+    })
+
+    if options['verbose']:
+        logger.debug(f"Financial report for {ticker}:\n{response.content}")
+
+    return response.content

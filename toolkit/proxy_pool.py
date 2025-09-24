@@ -2,6 +2,9 @@ import requests
 from bs4 import BeautifulSoup
 import ipaddress
 from itertools import cycle
+import logging
+
+logger = logging.getLogger(__name__)
 
 def _is_valid_ip(ip):
     try:
@@ -38,7 +41,7 @@ def _get_proxies():
 
     for provider in provider_list:
         try:
-            print(f"[INFO] Getting proxies from: {provider}")
+            logger.info(f"Getting proxies from: {provider}")
             page = requests.get(provider)
             soup = BeautifulSoup(page.text, 'html.parser')
                 
@@ -52,7 +55,7 @@ def _get_proxies():
                         proxy_list.append(f"{ip_address}:{port}")
             
         except:
-            print("[ERROR] Error with provider: " + provider)
+            logger.error("Error with provider: " + provider)
             continue
 
     return set(proxy_list[:10]) # limit to first 10 proxies
@@ -60,7 +63,7 @@ def _get_proxies():
 def _get_proxy_pool():
     proxy_list = _get_proxies()
 
-    print(f"[INFO] Retrieved {len(proxy_list)} proxies.")
+    logger.info(f"Retrieved {len(proxy_list)} proxies.")
     
     # proxy_list = [proxy for proxy in proxy_list if _is_valid_proxy(proxy)]
     # print(f"[INFO] {len(proxy_list)} proxies are valid and working.")

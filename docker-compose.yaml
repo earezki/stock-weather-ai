@@ -33,3 +33,24 @@ services:
     cpus: '2.0'
     command: v2 --model-id ${EMBEDDING_MODEL} --revision "main" --dtype float16 --batch-size 8 --port 7997 --engine torch --compile --no-bettertransformer
     # restart: unless-stopped
+
+  stock-weather-ai:
+    container_name: swai-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - 8000:8000
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - PROXY_URL=${PROXY_URL}
+      - USE_PROXIES=${USE_PROXIES}
+      - CACHE_DURATION=${CACHE_DURATION}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
+      - VERBOSE_LOGGING=${VERBOSE_LOGGING}
+      - LOG_LEVEL=${LOG_LEVEL}
+    depends_on:
+      - infinity
+      - searxng
+    # restart: unless-stopped

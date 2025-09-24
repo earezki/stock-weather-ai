@@ -4,6 +4,7 @@ import datetime
 import asyncio
 import os
 import httpx
+import logging
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from langchain_community.document_loaders import AsyncHtmlLoader, PyMuPDFLoader
@@ -22,6 +23,9 @@ from options import options
 
 from toolkit.cache import memory, timestamp_key
 from toolkit.user_agent import get_user_agent
+from tools import scrapping
+
+logger = logging.getLogger(__name__)
 
 def get_search_queries(query: str) -> dict:
     """
@@ -66,7 +70,7 @@ def get_search_queries(query: str) -> dict:
     })
 
     if options["verbose"]:
-        print(f"[DEBUG] LLM Response for search query of {query}: {response.content}")
+        logger.debug(f"LLM Response for search query of {query}: {response.content}")
 
     return json.loads(response.content)
 
@@ -78,13 +82,15 @@ def optimize_query(query: str) -> str:
     """
     prompt = PromptTemplate.from_template("""
         You are an AI assistant specialized in optimizing user queries for generating highly effective semantic embeddings. Your goal is to transform a user's natural language question into a single, comprehensive, and context-rich query string that provides maximum information for an embedding model.
-
+        Current date-time in ISO format: {current_date}
+                                          
         When rewriting the query, consider the following:
         -   **Expand and Clarify:** Fully expand abbreviations, clarify vague terms, and add necessary context to make the query unambiguous.
         -   **Capture Full Intent:** Ensure the rewritten query clearly expresses the user's underlying intent, including any implied sub-questions or facets.
         -   **Identify Key Entities and Relationships:** Explicitly mention important entities, concepts, and the relationships between them.
         -   **Integrate Relevant Keywords:** Incorporate synonyms or related terms that an embedding model might find useful for broader semantic matching.
         -   **Focus on Semantic Richness:** The goal is not just keyword density, but to create a semantically rich statement that accurately represents the user's information need.
+        -   **Time Sensitivity:** If the query is time-sensitive, include relevant dates or timeframes.
         -   **Output Format:** The output must be a JSON object with a single key: `optimized_embedding_query`. **Do not include any markdown formatting or code block delimiters (e.g., ```json) in the output.**
 
         Example User Query: "AI ethics latest?"
@@ -102,14 +108,17 @@ def optimize_query(query: str) -> str:
         User Query: {query}
         Output:
     """)
-        
+
+    iso_current_date = datetime.datetime.now().date().isoformat()
+
     chain = prompt | options["models"]["query"]
     response = chain.invoke({
+        "current_date": iso_current_date,
         "query": query
     })
 
     if options["verbose"]:
-        print(f"[DEBUG] LLM Response for optimized query of {query}: {response.content}")
+        logger.debug(f"LLM Response for optimized query of {query}: {response.content}")
 
     return response.content
 
@@ -119,12 +128,13 @@ async def fetch_results(client: httpx.AsyncClient,
                         query: str, category: str,
                         timestamp_key) -> dict:
     if options["verbose"]:
-        print(f"[DEBUG] searching internet for: {query}")
+        logger.debug(f"searching internet for: {query}")
 
     params = {
         "q": query,
         "format": "json",
         "categories": category,
+        "pageno": 1 #only first page.
     }
 
     searxng_host = os.getenv("SEARXNG_HOST")
@@ -156,7 +166,7 @@ async def web_search(search_queries: dict) -> list[dict]:
 
         for query, resp in zip(queries, responses):
             if isinstance(resp, Exception):
-                print(f"Error querying '{query}': {resp}")
+                logger.error(f"Error querying '{query}': {resp}")
                 continue
 
             for r in resp.get("results", []):
@@ -170,69 +180,6 @@ async def web_search(search_queries: dict) -> list[dict]:
                     })
 
     return results
-
-@memory.cache
-def load_documents_from_urls(urls: list[str]):
-    """
-    Loads documents from a list of URLs, handling PDF files separately.
-
-    Args:
-        urls: A list of URLs to load.
-
-    Returns:
-        A list of loaded and transformed documents.
-    """
-    if options["verbose"]:
-        print("[DEBUG] scrapping internet for: {urls}")
-
-    html_urls = [url for url in urls if not url.lower().endswith(".pdf")]
-    pdf_urls = [url for url in urls if url.lower().endswith(".pdf")]
-    all_docs = []
-
-    if html_urls:
-        try:
-            html_loader = AsyncHtmlLoader(
-                html_urls,
-                header_template={"User-Agent": get_user_agent()}
-            )
-            html_docs = html_loader.load()
-            html2text = Html2TextTransformer()
-            transformed_html_docs = html2text.transform_documents(html_docs)
-
-            for doc in transformed_html_docs:
-                matching_meta = next((url for url in urls if url == doc.metadata.get("source")), {})
-                doc.metadata.update({
-                    "url": matching_meta.get("url", ""),
-                    "title": matching_meta.get("title", ""),
-                    "snippet": matching_meta.get("snippet", ""),
-                    "type": "html"
-                })
-                # Deduplicate by text hash
-                doc.metadata["hash"] = hashlib.sha256(doc.page_content[:1000].encode()).hexdigest()
-                all_docs.append(doc)
-
-        except Exception as e:
-            print(f"Failed loading HTML docs: {e}")
-
-    for pdf_url in pdf_urls:
-        try:
-            pdf_loader = PyMuPDFLoader(pdf_url)
-            pdf_docs = pdf_loader.load()
-
-            for doc in pdf_docs:
-                doc.metadata.update({
-                    "url": pdf_url,
-                    "title": "",
-                    "snippet": "",
-                    "type": "pdf"
-                })
-                doc.metadata["hash"] = hashlib.sha256(doc.page_content[:1000].encode()).hexdigest()
-                all_docs.append(doc)
-        except Exception as e:
-            print(f"Failed loading PDF {pdf_url}: {e}")
-
-    unique_docs = {doc.metadata["hash"]: doc for doc in all_docs}
-    return list(unique_docs.values())
 
 def get_score_threshold_or_top_k(ranked_docs, top_k, score_threshold):
     """
@@ -292,15 +239,15 @@ def rerank_documents(docs: list, query: str) -> list:
     query_vector = embeddings.embed_query(query)
 
     if options["verbose"]:
-        print(f"[DEBUG] Generated {len(vectors)} vectors for {len(splitted_docs)} documents.")
-        print(f"[DEBUG] vector length: {len(query_vector)}")
+        logger.debug(f"Generated {len(vectors)} vectors for {len(splitted_docs)} documents.")
+        logger.debug(f"vector length: {len(query_vector)}")
 
     similarities = [cosine_similarity(query_vector, vec) for vec in vectors]
     ranked_docs = sorted(zip(splitted_docs, similarities), key=lambda x: x[1], reverse=True)
     ranked_docs = get_score_threshold_or_top_k(ranked_docs, top_k=top_k, score_threshold=score_threshold)
 
     if options["verbose"]:
-        print(f"[DEBUG] {len(ranked_docs)} documents passed the relevance threshold of {score_threshold} or are in the top {top_k}.")
+        logger.debug(f"{len(ranked_docs)} documents passed the relevance threshold of {score_threshold} or are in the top {top_k}.")
 
     original_lookup = {doc.metadata["doc_id"]: doc for doc in docs}
     retained_docs = [(original_lookup[doc.metadata["doc_id"]]) for doc, score in ranked_docs]
@@ -312,6 +259,7 @@ async def summarize_with_context(query: str, query_context: str) -> str:
     prompt = PromptTemplate.from_template("""
     You are a web search summarizer, tasked with summarizing a piece of text retrieved from a web search. Your primary goal is to summarize the 
     provided text into a detailed, 2-4 paragraph explanation that directly answers the given query.
+    Current date-time in ISO format: {current_date}    
 
     **CRITICAL INSTRUCTION:** If, and only if, the provided text **does not contain enough factual information to directly and comprehensively answer the query**, you **MUST** respond with "Insufficient-information". Do not attempt to guess, infer, or use outside knowledge; strictly rely on the given text.
 
@@ -319,6 +267,8 @@ async def summarize_with_context(query: str, query_context: str) -> str:
     - **Thorough and detailed**: Ensure that every key point from the text relevant to the query is captured and that the summary directly answers the query.
     - **Not too lengthy, but detailed**: The summary should be informative but not excessively long (2-4 paragraphs). Focus on providing detailed information in a concise format.
     - **Source-dependent**: Your response must solely be based on the information provided within the `<text>` tags. Do not introduce any external knowledge.
+    - **No external knowledge**: Do not use any information that is not contained within the provided text. If the text does not provide enough information to answer the query, respond with "Insufficient-information".
+    - **Time sensitivity**: If the query is time-sensitive, ensure that the summary reflects the most current information available in the text.
 
     The text will be shared inside the `text` XML tag, and the query inside the `query` XML tag.
 
@@ -368,12 +318,16 @@ async def summarize_with_context(query: str, query_context: str) -> str:
     """)
 
     if options["verbose"]:
-        print(f"[DEBUG] Summarizing a documents for {query}: {query_context[:200]}...")
+        logger.debug(f"Summarizing documents for {query}: {query_context[:200]}...")
 
+
+    iso_current_date = datetime.datetime.now().date().isoformat()
+    
     chain = prompt | options["models"]["summary"]
     response = await chain.ainvoke({
         "query": query,
-        "query_context": query_context
+        "query_context": query_context,
+        "current_date": iso_current_date
     })
 
     return response.content
@@ -400,7 +354,7 @@ async def summarize_docs(docs, query) -> list[Document]:
                 metadata=doc.metadata
             )
         except Exception as e:
-            print(f"Failed to summarize document {doc.metadata.get('url', '')}: {e}")
+            logger.error(f"Failed to summarize document {doc.metadata.get('url', '')}: {e}")
             return None
 
     tasks = [summarize_doc(doc) for doc in docs]
@@ -420,7 +374,7 @@ def combine_summaries(query: str, docs: list[Document]) -> str:
         formatted_snippet = f"[{snippet_index}] {content}"
         formatted_snippets.append(formatted_snippet)
         if options["verbose"]:
-            print(f"[DEBUG] Snippet [{snippet_index}] (from {doc.metadata.get('url', '')}): {content[:200]}...")
+            logger.debug(f"Snippet [{snippet_index}] (from {doc.metadata.get('url', '')}): {content[:200]}...")
 
     query_context = "\n\n".join(formatted_snippets)
 
@@ -476,7 +430,7 @@ def combine_summaries(query: str, docs: list[Document]) -> str:
     )
 
     if options["verbose"]:
-        print(f"[DEBUG] Summarizing final version for {len(docs)} documents !")
+        logger.debug(f"Summarizing final version for {len(docs)} documents !")
 
     chain = prompt | options["models"]["summary"]
     response = chain.invoke({
@@ -487,7 +441,7 @@ def combine_summaries(query: str, docs: list[Document]) -> str:
     return response.content
 
 
-async def news(ticker: str) -> list[dict]:
+async def get_news(ticker: str) -> list[dict]:
     """
     Given a stock ticker symbol, this function generates relevant search queries,
     performs web searches, and returns aggregated news results.
@@ -497,36 +451,36 @@ async def news(ticker: str) -> list[dict]:
 
     query = optimize_query(query)
     if options["verbose"]:
-        print(f"[DEBUG] Optimized query for {ticker}: {query}")
+        logger.debug(f"Optimized query for {ticker}: {query}")
 
     search_queries = get_search_queries(query)
 
     if options["verbose"]:
-        print(f"[DEBUG] Generated search queries for {ticker}: {search_queries}")
+        logger.debug(f"Generated search queries for {ticker}: {search_queries}")
 
     query_results = await web_search(search_queries)
     if options["verbose"]:
-        print(f"[DEBUG] Retrieved {len(query_results)} results for {ticker}")
+        logger.debug(f"Retrieved {len(query_results)} results for {ticker}")
 
     if not query_results:
-        print(f"[ERROR] No results were found for ticker = {ticker}")
+        logger.error(f"No results were found for ticker = {ticker}")
         return []
 
     urls_list = [qr["url"] for qr in query_results]
-    docs = load_documents_from_urls(urls_list)
+    docs = scrapping.load_documents_from_urls(urls_list)
     if options["verbose"]:
-        print(f"[DEBUG] Loaded {len(docs)} documents from internet for {ticker}")
+        logger.debug(f"Loaded {len(docs)} documents from internet for {ticker}")
 
     if not docs:
-        print(f"[INFO] no docs were returned from load_documents_from_urls, for ticker {ticker}")
+        logger.info(f"no docs were returned from load_documents_from_urls, for ticker {ticker}")
         return []
 
     docs = rerank_documents(docs, query)
     if options["verbose"]:
-        print(f"[DEBUG] Reranked to {len(docs)} relevant documents for {ticker}")
+        logger.debug(f"Reranked to {len(docs)} relevant documents for {ticker}")
 
     docs = await summarize_docs(docs, query)
     if options["verbose"]:
-        print(f"[DEBUG] Summarized to {len(docs)} documents for {ticker}")
+        logger.debug(f"Summarized to {len(docs)} documents for {ticker}")
 
     return combine_summaries(query=query, docs=docs)

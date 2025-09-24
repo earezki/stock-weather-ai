@@ -2,12 +2,14 @@ import os
 import json
 import time
 import functools
+import logging
 
 from options import options
 
 from joblib import Memory
 
 memory = Memory(location=options['cache_dir'], verbose=0)
+logger = logging.getLogger(__name__)
 
 def timestamp_key(ttl):
     return int(time.time() // ttl)
@@ -52,7 +54,7 @@ def file_cache(cache_name=None, ttl=None, cache_dir=None):
 
             cached = _load_cache(cache_file)
             if cached and _is_valid(cached, effective_ttl):
-                print(f"[INFO] Using cached data from {cache_file}")
+                logger.info(f"Using cached data from {cache_file}")
                 return cached.get("value")
 
             result = func(*args, **kwargs)

@@ -3,6 +3,7 @@ import requests
 import time
 import random
 from io import StringIO
+import logging
 
 from options import options
 
@@ -11,6 +12,8 @@ from toolkit.user_agent import get_user_agent
 from toolkit.cache import memory, timestamp_key
 
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+logger = logging.getLogger(__name__)
 
 @memory.cache
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
@@ -35,19 +38,19 @@ def scrape_market_data(timestamp_key):
 
     if proxy and options['use_proxies'] is True:
         session.proxies = {"http": proxy, "https": proxy}
-        print(f"[INFO] Using proxy: {proxy}")
+        logger.info(f"Using proxy: {proxy}")
 
     if options.get('timeout'):
         session.timeout = options['timeout']
 
-    print("[INFO] Scraping Yahoo Finance for market movers...")
+    logger.info("Scraping Yahoo Finance for market movers...")
 
     gainers_url = "https://finance.yahoo.com/gainers"
     response_gainers = session.get(gainers_url)
     response_gainers.raise_for_status()
     gainers_df = pd.read_html(StringIO(response_gainers.text))[0]
 
-    print("[INFO] Successfully scraped raw gainer data.")
+    logger.info("Successfully scraped raw gainer data.")
 
     # add a delay to avoid being blocked
     time.sleep(random.uniform(1, 3))
@@ -56,7 +59,7 @@ def scrape_market_data(timestamp_key):
     response_losers = session.get(losers_url)
     response_losers.raise_for_status()
     losers_df = pd.read_html(StringIO(response_losers.text))[0]
-    print("[INFO] Successfully scraped raw loser data.")
+    logger.info("Successfully scraped raw loser data.")
 
     return gainers_df, losers_df
 
@@ -66,14 +69,14 @@ def get_top_movers():
     Returns cached result if available.
     """
 
-    print("[INFO] Fetching new market movers data.")
+    logger.info("Fetching new market movers data.")
 
     try:
         # used as a cache key to avoid redundant requests
         current_timestamp_key = timestamp_key(options['movers']['cache_duration'])
         gainers_df, losers_df = scrape_market_data(current_timestamp_key)
     except Exception as e:
-        print(f"[ERROR] Failed to scrape market data: {e}")
+        logger.error(f"Failed to scrape market data: {e}")
         gainers_df, losers_df = None, None
 
     if gainers_df is None or losers_df is None:
@@ -86,7 +89,7 @@ def get_top_movers():
         )
         gainers_list = gainers_subset.to_dict('records')
     else:
-        print("[ERROR] Could not find 'Symbol' or 'Name' columns in gainers data.")
+        logger.error("Could not find 'Symbol' or 'Name' columns in gainers data.")
         gainers_list = []
 
     if 'Symbol' in losers_df.columns and 'Name' in losers_df.columns:
@@ -96,7 +99,7 @@ def get_top_movers():
         )
         losers_list = losers_subset.to_dict('records')
     else:
-        print("[ERROR] Could not find 'Symbol' or 'Name' columns in losers data.")
+        logger.error("Could not find 'Symbol' or 'Name' columns in losers data.")
         losers_list = []
 
     market_movers = {
