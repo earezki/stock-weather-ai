@@ -85,17 +85,22 @@ export default function App() {
     const compare = (a: ReportFile, b: ReportFile) => {
       switch (sortOption) {
         case 'ticker-asc':
-          return a.ticker.localeCompare(b.ticker)
+            return a.ticker.localeCompare(b.ticker)
         case 'ticker-desc':
-          return b.ticker.localeCompare(a.ticker)
+            return b.ticker.localeCompare(a.ticker)
         case 'confidence-asc':
-          return a.content.confidence_score - b.content.confidence_score
+            return a.content.confidence_score - b.content.confidence_score
         case 'confidence-desc':
-          return b.content.confidence_score - a.content.confidence_score
-        case 'prediction':
-          return a.content.prediction.localeCompare(b.content.prediction)
+            return b.content.confidence_score - a.content.confidence_score
+        case 'prediction-increase':
+            // sort by prediction then by confidence
+            return  b.content.prediction.localeCompare(a.content.prediction) || 
+                    b.content.confidence_score - a.content.confidence_score
+        case 'prediction-decrease':
+            return  a.content.prediction.localeCompare(b.content.prediction) ||
+                    b.content.confidence_score - a.content.confidence_score
         default:
-          return 0
+            return 0
       }
     }
 
@@ -155,7 +160,8 @@ export default function App() {
               <option value="ticker-desc">Ticker ↓</option>
               <option value="confidence-desc">Confidence ↓</option>
               <option value="confidence-asc">Confidence ↑</option>
-              <option value="prediction">Prediction</option>
+              <option value="prediction-increase">Prediction ↑</option>
+              <option value="prediction-decrease">Prediction ↓</option>
             </select>
           </div>
 
