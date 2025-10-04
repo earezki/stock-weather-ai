@@ -47,4 +47,4 @@ class Agent:
             }
 
             with open(f"reports/evaluation_{ticker}_{date}.json", "w") as f:
-                f.write(str(result))  # keeping original behavior (stringified dict)
+                f.write(str(result))

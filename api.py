@@ -4,7 +4,10 @@ import os
 import re
 import json
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
+from contextlib import asynccontextmanager
+import asyncio
+import logging
 from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, Query, HTTPException
@@ -28,9 +31,50 @@ class ReportsResponse(BaseModel):
 	available_dates: List[date]
 
 
-app = FastAPI(title="Stock Weather AI Reports API", version="0.1.0")
+SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "1")
 
-# Allow CORS for local frontend dev servers (Vite). Adjust origins for production.
+logger = logging.getLogger(__name__)
+
+try:
+	# local import to avoid import cycles
+	from agents.agent import Agent
+except Exception:
+	Agent = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+	"""
+	Lifespan context manager to start/stop the scheduler with the app.
+	"""
+
+	if SCHEDULER_ENABLED != "1":
+		logger.info("Scheduler disabled")
+		yield
+		return
+
+	loop = asyncio.get_event_loop()
+	task = loop.create_task(_scheduler_loop(app))
+	app.state.scheduler_task = task
+	logger.info("Scheduler background task started")
+
+	try:
+		yield
+	finally:
+		# SHUTDOWN: cancel the background task
+		task = getattr(app.state, "scheduler_task", None)
+		if task:
+			logger.info("Cancelling scheduler background task")
+			task.cancel()
+			try:
+				await task
+			except asyncio.CancelledError:
+				logger.info("Scheduler task cancelled")
+
+
+app = FastAPI(title="Stock Weather AI Reports API", version="0.1.0", lifespan=lifespan)
+
+# Allow CORS for local frontend dev servers.
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=[
@@ -115,3 +159,45 @@ def get_reports(date_param: Optional[str] = Query(None, alias="date", descriptio
 		files.append(ReportFile(filename=path.name, ticker=ticker, content=content))
 
 	return ReportsResponse(date=target_date, files=files, available_dates=all_dates)
+
+
+async def _seconds_until_next_midnight_utc() -> float:
+	"""Return number of seconds from now until the next UTC midnight.
+
+	Uses aware datetimes in UTC to be explicit about timezone handling.
+	"""
+	now = datetime.now(timezone.utc)
+	# tomorrow at 00:00 UTC
+	tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+	delta = tomorrow - now
+	return delta.total_seconds()
+
+
+async def _scheduler_loop(app: FastAPI):
+	"""
+	Background loop that waits until next midnight UTC then runs Agent.act().
+	"""
+	if Agent is None:
+		logger.warning("Agent class not available; scheduler will not run.")
+		return
+
+	while True:
+		secs = await _seconds_until_next_midnight_utc()
+		logger.info(f"Scheduler sleeping for {secs:.1f}s until next midnight UTC")
+		try:
+			await asyncio.sleep(secs)
+		except asyncio.CancelledError:
+			logger.info("Scheduler task cancelled during sleep")
+			raise
+
+		try:
+			logger.info("Scheduler waking up: running Agent.act()")
+			agent = Agent()
+			await agent.act()
+			logger.info("Agent.act() completed")
+		except asyncio.CancelledError:
+			logger.info("Scheduler task cancelled during agent run")
+			raise
+		except Exception as e:
+			logger.exception(f"Scheduled run failed: {e}")
+
